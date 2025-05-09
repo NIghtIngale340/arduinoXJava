@@ -1,0 +1,9 @@
+{
+    "java.project.sourcePaths": [
+        "src\\main\\java\\com\\securitysystem"
+    ],
+    "java.project.referencedLibraries": [
+        "c:\\Users\\Mark Christian Anub\\Desktop\\oopProj\\lib\\jSerialComm-2.11.0.jar"
+    ],
+    "java.configuration.updateBuildConfiguration": "interactive"
+}
