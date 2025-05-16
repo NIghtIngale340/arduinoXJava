@@ -1,16 +1,25 @@
 package com.securitysystem.fare;
 
-import com.fazecast.jSerialComm.*;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
+import com.fazecast.jSerialComm.SerialPort;
+
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
-import javafx.scene.control.*;
-import javafx.scene.layout.*;
+import javafx.scene.control.Button;
+import javafx.scene.control.ComboBox;
+import javafx.scene.control.Label;
+import javafx.scene.control.PasswordField;
+import javafx.scene.control.TextArea;
+import javafx.scene.control.TextField;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
 public class FareSystemApp extends Application {
     private SerialPort serialPort;
@@ -86,14 +95,14 @@ public class FareSystemApp extends Application {
         // Find the Arduino port
         SerialPort[] ports = SerialPort.getCommPorts();
         for (SerialPort port : ports) {
-            if (port.getDescriptivePortName().contains("Arduino")) {
+            if (port.getSystemPortName().equals("COM5")) {
                 serialPort = port;
                 break;
             }
         }
 
         if (serialPort == null) {
-            log("Error: No Arduino found");
+            log("Error: No Arduino found on COM5");
             return;
         }
 
@@ -105,7 +114,7 @@ public class FareSystemApp extends Application {
 
         // Open the port
         if (!serialPort.openPort()) {
-            log("Error: Could not open port");
+            log("Error: Could not open port COM5");
             return;
         }
 
@@ -151,13 +160,17 @@ public class FareSystemApp extends Application {
     }
 
     private void handleBalanceUpdate(String data) {
-        String[] parts = data.split(",");
-        if (parts.length == 2) {
-            int beepBalance = Integer.parseInt(parts[0]);
-            int singleBalance = Integer.parseInt(parts[1]);
-            state.setBeepBalance(beepBalance);
-            state.setSingleBalance(singleBalance);
-            updateBalanceDisplay();
+        try {
+            String[] parts = data.trim().split(",");
+            if (parts.length == 2) {
+                int beepBalance = Integer.parseInt(parts[0].trim());
+                int singleBalance = Integer.parseInt(parts[1].trim());
+                state.setBeepBalance(beepBalance);
+                state.setSingleBalance(singleBalance);
+                updateBalanceDisplay();
+            }
+        } catch (NumberFormatException e) {
+            log("Error parsing balance data: " + data);
         }
     }
 
