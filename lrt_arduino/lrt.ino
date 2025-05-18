@@ -43,8 +43,9 @@ Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
 #define STATE_STATION_SELECT 6
 #define STATE_DEST_SELECT 7
 #define STATE_TRANSFER 8
-#define STATE_SETTINGS 9        // New state for settings menu
-#define STATE_RESET_CONFIRM 10  // New state for reset confirmation
+#define STATE_SETTINGS 9        // State for settings menu
+#define STATE_RESET_CONFIRM 10  // State for reset confirmation
+#define STATE_TRANSACTION_COMPLETE 11  // New state for completed transactions
 int currentState = STATE_MAIN_MENU;
 
 // Settings password (default: 1234)
@@ -52,7 +53,7 @@ const char settingsPassword[] = "1234";
 
 // Current user and date information
 char currentUser[16] = "NIghtIngale340";
-char currentDateTime[20] = "2025-05-16 15:13";
+char currentDateTime[20] = "2025-05-18 02:43";
 
 // Variables for fare calculation
 int beepBalance = 100;  // Starting with 100 pesos
@@ -66,27 +67,22 @@ int singleJourneyBalance = 0;
 byte ticketType = TICKET_BEEP;    // Use byte instead of string
 byte userCardType = CARD_REGULAR;  // Use byte instead of string
 int totalFare = 0;
-int totalDistance = 0;
+int totalDistance = 0;  // Track total distance
+int currentTripDistance = 0;  // Distance for current trip
 
 // Current journey variables
 byte currentLine = 1;
 byte currentStation = 0;
 byte stationCount = 0;
 byte destinationStation = 0;
+boolean transactionInProgress = false;  // Flag to prevent multiple transactions
 
 // EEPROM addresses
 #define BEEP_BALANCE_ADDR 0
 #define SINGLE_BALANCE_ADDR 4
 #define CURRENT_LINE_ADDR 8
 #define CURRENT_STATION_ADDR 9
-
-// Screen refresh flag
-bool needsRefresh = true;
-
-// Timer variables for scrolling text
-unsigned long lastScrollTime = 0;
-const unsigned long scrollInterval = 500;  // Scroll every 500ms
-int scrollPosition = 0;
+#define TOTAL_DISTANCE_ADDR 10  // New EEPROM address for total distance
 
 // Serial communication variables
 char inputBuffer[32];
@@ -95,36 +91,142 @@ boolean commandComplete = false;
 unsigned long lastStatusUpdate = 0;
 const unsigned long statusInterval = 5000;  // Send status updates every 5 seconds
 
-// LRT1 Station Names (only those needed for transfers and specific functionality)
+// State timeout variables to prevent system getting stuck
+unsigned long stateStartTime = 0;
+const unsigned long transactionTimeout = 10000;  // 10 seconds timeout for transactions
+
+// LRT1 Station Names
 const char lrt1_station_0[] PROGMEM = "Roosevelt";
+const char lrt1_station_1[] PROGMEM = "Balintawak";
+const char lrt1_station_2[] PROGMEM = "Monumento";
+const char lrt1_station_3[] PROGMEM = "5th Avenue";
+const char lrt1_station_4[] PROGMEM = "R. Papa";
+const char lrt1_station_5[] PROGMEM = "Abad Santos";
+const char lrt1_station_6[] PROGMEM = "Blumentritt";
+const char lrt1_station_7[] PROGMEM = "Tayuman";
+const char lrt1_station_8[] PROGMEM = "Bambang";
 const char lrt1_station_9[] PROGMEM = "Doroteo Jose";
+const char lrt1_station_10[] PROGMEM = "Central Term";
+const char lrt1_station_11[] PROGMEM = "United Nations";
+const char lrt1_station_12[] PROGMEM = "Pedro Gil";
+const char lrt1_station_13[] PROGMEM = "Quirino";
+const char lrt1_station_14[] PROGMEM = "Vito Cruz";
+const char lrt1_station_15[] PROGMEM = "Gil Puyat";
+const char lrt1_station_16[] PROGMEM = "Libertad";
 const char lrt1_station_17[] PROGMEM = "EDSA";
+const char lrt1_station_18[] PROGMEM = "Baclaran";
+const char lrt1_station_19[] PROGMEM = "Roosevelt";
 
-const char* const lrt1_key_stations[] PROGMEM = {
-  lrt1_station_0, lrt1_station_9, lrt1_station_17
+const char* const lrt1_stations[] PROGMEM = {
+  lrt1_station_0, lrt1_station_1, lrt1_station_2, lrt1_station_3, lrt1_station_4,
+  lrt1_station_5, lrt1_station_6, lrt1_station_7, lrt1_station_8, lrt1_station_9,
+  lrt1_station_10, lrt1_station_11, lrt1_station_12, lrt1_station_13, lrt1_station_14,
+  lrt1_station_15, lrt1_station_16, lrt1_station_17, lrt1_station_18, lrt1_station_19
 };
 
-// LRT2 Station Names (only those needed for transfers and specific functionality)
+// LRT2 Station Names
 const char lrt2_station_0[] PROGMEM = "Recto";
+const char lrt2_station_1[] PROGMEM = "Legarda";
+const char lrt2_station_2[] PROGMEM = "Pureza";
+const char lrt2_station_3[] PROGMEM = "V. Mapa";
+const char lrt2_station_4[] PROGMEM = "J. Ruiz";
+const char lrt2_station_5[] PROGMEM = "Gilmore";
+const char lrt2_station_6[] PROGMEM = "Betty Go-B";
 const char lrt2_station_7[] PROGMEM = "Cubao";
+const char lrt2_station_8[] PROGMEM = "Anonas";
+const char lrt2_station_9[] PROGMEM = "Katipunan";
+const char lrt2_station_10[] PROGMEM = "Santolan";
+const char lrt2_station_11[] PROGMEM = "Marikina";
+const char lrt2_station_12[] PROGMEM = "Antipolo";
 
-const char* const lrt2_key_stations[] PROGMEM = {
-  lrt2_station_0, lrt2_station_7
+const char* const lrt2_stations[] PROGMEM = {
+  lrt2_station_0, lrt2_station_1, lrt2_station_2, lrt2_station_3, lrt2_station_4,
+  lrt2_station_5, lrt2_station_6, lrt2_station_7, lrt2_station_8, lrt2_station_9,
+  lrt2_station_10, lrt2_station_11, lrt2_station_12
 };
 
-// Segment distances for LRT1 (in meters)
-const int lrt1_distances[] PROGMEM = {
-  1870, 2250, 1087, 954, 660, 927, 671, 618, 648, 685,
-  725, 1214, 754, 794, 827, 1061, 730, 1010, 588
+// Fare matrices for LRT1 (20x20 stations)
+const byte lrt1_fare_matrix[] PROGMEM = {
+  13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 23, 24, 25, 26, 27, 28, 29, 30, 33, 35,
+  14, 13, 15, 15, 17, 18, 19, 20, 21, 22, 23, 24, 24, 25, 26, 27, 28, 29, 32, 34,
+  15, 15, 13, 14, 15, 16, 17, 18, 20, 21, 22, 22, 23, 24, 25, 26, 27, 28, 31, 33,
+  16, 15, 14, 13, 15, 16, 17, 17, 19, 20, 21, 21, 22, 23, 24, 25, 26, 27, 30, 32,
+  17, 17, 15, 15, 13, 14, 15, 16, 18, 19, 19, 20, 21, 22, 23, 24, 25, 26, 29, 31,
+  18, 18, 16, 16, 14, 13, 14, 15, 17, 18, 18, 19, 20, 21, 22, 23, 24, 25, 28, 30,
+  19, 19, 17, 17, 15, 14, 13, 14, 16, 17, 17, 18, 19, 20, 21, 22, 23, 24, 27, 29,
+  20, 20, 18, 17, 16, 15, 14, 13, 15, 16, 16, 17, 18, 19, 20, 21, 22, 23, 26, 28,
+  22, 21, 20, 19, 18, 17, 16, 15, 13, 14, 15, 16, 17, 17, 18, 19, 20, 22, 24, 27,
+  23, 22, 21, 20, 19, 18, 17, 16, 14, 13, 14, 15, 16, 16, 17, 18, 19, 20, 23, 26,
+  23, 23, 22, 21, 19, 18, 17, 16, 15, 14, 13, 14, 15, 16, 16, 17, 18, 19, 22, 25,
+  24, 24, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 14, 15, 16, 16, 17, 18, 21, 24,
+  25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 14, 15, 16, 17, 18, 21, 23,
+  26, 25, 24, 23, 22, 21, 20, 19, 17, 16, 16, 15, 14, 13, 14, 15, 16, 17, 20, 22,
+  27, 26, 25, 24, 23, 22, 21, 20, 18, 17, 16, 16, 15, 14, 13, 14, 15, 16, 19, 21,
+  28, 27, 26, 25, 24, 23, 22, 21, 19, 18, 17, 16, 16, 15, 14, 13, 14, 15, 18, 20,
+  29, 28, 27, 26, 25, 24, 23, 22, 20, 19, 18, 17, 16, 16, 15, 14, 13, 14, 17, 19,
+  30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 16, 18,
+  33, 32, 31, 30, 29, 28, 27, 26, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 13, 16,
+  35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 16, 13
 };
 
-// Segment distances for LRT2 (in meters)
-const int lrt2_distances[] PROGMEM = {
-  1050, 1389, 1350, 1357, 928, 1075, 1164, 955, 438, 1970, 1000, 1000
+// Fare matrix for LRT2 (using similar structure for 13x13)
+// Using same pricing structure as LRT1 for simplicity
+const byte lrt2_fare_matrix[] PROGMEM = {
+  13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 25, 27, 30,
+  14, 13, 14, 15, 16, 17, 18, 19, 21, 22, 24, 26, 29,
+  15, 14, 13, 14, 15, 16, 17, 18, 20, 21, 23, 25, 28,
+  16, 15, 14, 13, 14, 15, 16, 17, 19, 20, 22, 24, 27,
+  17, 16, 15, 14, 13, 14, 15, 16, 18, 19, 21, 23, 26,
+  18, 17, 16, 15, 14, 13, 14, 15, 17, 18, 20, 22, 25,
+  19, 18, 17, 16, 15, 14, 13, 14, 16, 17, 19, 21, 24,
+  20, 19, 18, 17, 16, 15, 14, 13, 15, 16, 18, 20, 23,
+  22, 21, 20, 19, 18, 17, 16, 15, 13, 14, 16, 18, 21,
+  23, 22, 21, 20, 19, 18, 17, 16, 14, 13, 15, 17, 20,
+  25, 24, 23, 22, 21, 20, 19, 18, 16, 15, 13, 15, 18,
+  27, 26, 25, 24, 23, 22, 21, 20, 18, 17, 15, 13, 16,
+  30, 29, 28, 27, 26, 25, 24, 23, 21, 20, 18, 16, 13
 };
 
-// Base fare matrix for distance calculation (simplified)
-const byte fare_base[5] PROGMEM = { 13, 15, 18, 20, 25 }; // Base fares for distances
+// Distance matrices for LRT1 (in kilometers)
+const byte lrt1_distance_matrix[] PROGMEM = {
+  0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+  1, 0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+  3, 2, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+  4, 3, 1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+  5, 4, 2, 1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+  6, 5, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
+  7, 6, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
+  8, 7, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+  9, 8, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+  10, 9, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+  11, 10, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+  12, 11, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6, 7, 8,
+  13, 12, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6, 7,
+  14, 13, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6,
+  15, 14, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5,
+  16, 15, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4,
+  17, 16, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3,
+  18, 17, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2,
+  19, 18, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1,
+  20, 19, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0
+};
+
+// Distance matrix for LRT2
+const byte lrt2_distance_matrix[] PROGMEM = {
+  0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+  1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 
+  2, 1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+  3, 2, 1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+  4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6, 7, 8,
+  5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6, 7,
+  6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6,
+  7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5,
+  8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4,
+  9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3,
+  10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2,
+  11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1,
+  12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0
+};
 
 // Function prototypes
 void displayMainMenu();
@@ -134,8 +236,8 @@ void displayLineMenu();
 void displaySettingsMenu();
 void displayTransferOptions(byte line, byte station);
 void displayStations(byte line);
-int getDistance(byte line, byte start, byte end);
-int getFare(byte line, byte origin, byte dest);
+int getFareFromMatrix(byte line, byte origin, byte dest);
+int getDistanceFromMatrix(byte line, byte origin, byte dest);
 void openTurnstile();
 void closeTurnstile();
 long measureDistance();
@@ -149,12 +251,14 @@ void loadBalances();
 void saveBalances();
 void saveCurrentStation();
 void loadCurrentStation();
+void loadTotalDistance();
+void saveTotalDistance();
 void getStationName(byte line, byte station, char* buffer);
 void displayStatusBar();
 void resetBalances();
+void resetTotalDistance();
 char* readPassword(byte maxDigits);
 bool authenticateUser(const char* enteredPassword);
-void scrollStationName(byte line, byte station);
 void processMainMenu(char key);
 void processTopUpBeep(char key);
 void processTopUpSingle(char key);
@@ -167,16 +271,19 @@ void processTransferSelect(char key);
 void processSettingsMenu(char key);
 void processResetConfirm(char key);
 void processPassengerEntry();
+void finishTransaction();
 void displayUserInfo();
 void processSerialData();
 void handleSerialCommand(char* command);
 void sendBalanceUpdate();
 void sendStationUpdate();
 void sendUserInfo();
+void sendDistanceUpdate();
 void sendTripRecord(byte line, byte origin, byte dest, int fare, int distance);
 void sendTopupRecord(byte cardType, int amount, int newBalance);
 void sendMessage(const char* message);
 void sendError(const char* errorCode);
+void checkStateTimeout();
 
 void setup() {
   // Initialize Serial communication with the Java application
@@ -197,10 +304,19 @@ void setup() {
 
   pinMode(GREEN_LED_PIN, OUTPUT);
   pinMode(RED_LED_PIN, OUTPUT);
+  digitalWrite(GREEN_LED_PIN, LOW);
+  digitalWrite(RED_LED_PIN, LOW);
 
-  // Load saved balances from EEPROM
+  // Load saved balances and distance from EEPROM
   loadBalances();
   loadCurrentStation();
+  loadTotalDistance();
+
+  // Reset transaction flag
+  transactionInProgress = false;
+
+  // Initialize state timer
+  stateStartTime = millis();
 
   // Display welcome message
   lcd.clear();
@@ -223,6 +339,7 @@ void setup() {
   sendMessage("Arduino connected on COM5");
   sendBalanceUpdate();
   sendStationUpdate();
+  sendDistanceUpdate();
   sendUserInfo();
 
   displayMainMenu();
@@ -235,19 +352,19 @@ void loop() {
   // Process keypad input
   char key = readKey();
 
-  // Display status bar (balance and current station) in relevant states
-  if ((millis() - lastScrollTime) >= scrollInterval) {
-    if (currentState == STATE_MAIN_MENU || currentState == STATE_LINE_SELECT || 
-        currentState == STATE_STATION_SELECT || currentState == STATE_DEST_SELECT) {
-      displayStatusBar();
-    }
-    lastScrollTime = millis();
+  // Check for state timeouts
+  checkStateTimeout();
+
+  // Display status bar in relevant states
+  if (currentState == STATE_MAIN_MENU) {
+    displayStatusBar();
   }
 
   // Periodic status updates to Java app
   if ((millis() - lastStatusUpdate) >= statusInterval) {
     sendBalanceUpdate();
     sendStationUpdate();
+    sendDistanceUpdate();
     lastStatusUpdate = millis();
   }
 
@@ -286,18 +403,69 @@ void loop() {
     case STATE_RESET_CONFIRM:
       processResetConfirm(key);
       break;
+    case STATE_TRANSACTION_COMPLETE:
+      // Wait for timeout or key press to return to destination selection
+      if (key != 0) {
+        // Any key press returns to destination selection
+        finishTransaction();
+      }
+      break;
   }
 
   // Check ultrasonic sensor for turnstile simulation
-  if (currentState == STATE_DEST_SELECT) {
+  if (currentState == STATE_DEST_SELECT && !transactionInProgress) {
     long distance = measureDistance();
     // If someone approaches within 10cm
     if (distance < 10 && distance > 0) {
       Serial.println(F("MSG:Passenger detected!"));
+      // Set flag to prevent multiple detections
+      transactionInProgress = true;
       // Process turnstile entry logic
       processPassengerEntry();
     }
   }
+}
+
+// Check for state timeouts to prevent system getting stuck
+void checkStateTimeout() {
+  // Only implement timeout for transaction complete state
+  if (currentState == STATE_TRANSACTION_COMPLETE) {
+    if ((millis() - stateStartTime) > transactionTimeout) {
+      finishTransaction(); // Auto-return to destination selection after timeout
+    }
+  }
+}
+
+// Finish transaction and return to appropriate state
+// Finish transaction and return to appropriate state
+void finishTransaction() {
+  // Reset transaction flag
+  transactionInProgress = false;
+  
+  // Turn off LED
+  digitalWrite(GREEN_LED_PIN, LOW);
+  
+  // Check if current station is a transfer station
+  if (isTransferStation(currentLine, currentStation)) {
+    currentState = STATE_TRANSFER;
+    displayTransferOptions(currentLine, currentStation);
+    return;
+  }
+  
+  // If not a transfer station, return to destination selection state
+  currentState = STATE_DEST_SELECT;
+  
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  char stationName[15];
+  getStationName(currentLine, currentStation, stationName);
+  lcd.print(F("Current: "));
+  lcd.print(stationName);
+  lcd.setCursor(0, 1);
+  lcd.print(F("Select dest."));
+  
+  // Send updated station information
+  sendStationUpdate();
 }
 
 // Process serial data coming from Java app
@@ -307,8 +475,10 @@ void processSerialData() {
     
     // Process complete commands when newline is received
     if (inChar == '\n') {
-      inputBuffer[bufferIndex] = '\0'; // Terminate the string
-      handleSerialCommand(inputBuffer);
+      if (bufferIndex < 32) {
+        inputBuffer[bufferIndex] = '\0'; // Terminate the string
+        handleSerialCommand(inputBuffer);
+      }
       bufferIndex = 0; // Reset buffer
     } else if (bufferIndex < 31) {
       // Add character to buffer
@@ -331,53 +501,57 @@ void handleSerialCommand(char* command) {
       // Send current station
       sendStationUpdate();
     }
+    else if (strncmp(action, "GET_DIST", 8) == 0) {
+      // Send total distance
+      sendDistanceUpdate();
+    }
     else if (strncmp(action, "GET_USER", 8) == 0) {
       // Send current user info
       sendUserInfo();
     }
-else if (strncmp(action, "TOPUP", 5) == 0) {
-  // Format: CMD:TOPUP,BEEP|SINGLE,amount
-  char* firstComma = strchr(action, ',');
-  if (firstComma) {
-    char* secondComma = strchr(firstComma + 1, ',');
-    if (secondComma) {
-      *secondComma = '\0'; // Temporarily null-terminate for comparison
-      char* cardTypeStr = firstComma + 1;
-      int amount = atoi(secondComma + 1);
-      *secondComma = ','; // Restore the comma
-      
-      if (amount <= 0) {
-        sendError("002"); // Invalid amount
-        return;
-      }
-      
-      // Add debug message to see what's being received
-      char debugMsg[50];
-      sprintf(debugMsg, "Received card type: '%s'", cardTypeStr);
-      sendMessage(debugMsg);
-      
-      // Trim any leading/trailing whitespace and convert to uppercase for more robust comparison
-      while (*cardTypeStr == ' ') cardTypeStr++; // Skip leading spaces
-      
-      if (strncmp(cardTypeStr, "BEEP", 4) == 0) {
-        beepBalance += amount;
-        saveBalances();
-        sendMessage("Beep card topped up");
-        sendTopupRecord(TICKET_BEEP, amount, beepBalance);
-      } 
-      else if (strncmp(cardTypeStr, "SINGLE", 6) == 0) {
-        singleJourneyBalance += amount;
-        saveBalances();
-        sendMessage("Single journey card topped up");
-        sendTopupRecord(TICKET_SINGLE, amount, singleJourneyBalance);
-      } 
-      else {
-        // Send more detailed error
-        char errorMsg[50];
-        sprintf(errorMsg, "Invalid card type: '%s'", cardTypeStr);
-        sendMessage(errorMsg);
-        sendError("003"); // Invalid card type
-      }
+    else if (strncmp(action, "TOPUP", 5) == 0) {
+      // Format: CMD:TOPUP,BEEP|SINGLE,amount
+      char* firstComma = strchr(action, ',');
+      if (firstComma) {
+        char* secondComma = strchr(firstComma + 1, ',');
+        if (secondComma) {
+          *secondComma = '\0'; // Temporarily null-terminate for comparison
+          char* cardTypeStr = firstComma + 1;
+          int amount = atoi(secondComma + 1);
+          *secondComma = ','; // Restore the comma
+          
+          if (amount <= 0) {
+            sendError("002"); // Invalid amount
+            return;
+          }
+          
+          // Debug message to see what's being received
+          char debugMsg[50];
+          sprintf(debugMsg, "Received card type: '%s'", cardTypeStr);
+          sendMessage(debugMsg);
+          
+          // Trim any leading whitespace
+          while (*cardTypeStr == ' ') cardTypeStr++;
+          
+          if (strncmp(cardTypeStr, "BEEP", 4) == 0) {
+            beepBalance += amount;
+            saveBalances();
+            sendMessage("Beep card topped up");
+            sendTopupRecord(TICKET_BEEP, amount, beepBalance);
+          } 
+          else if (strncmp(cardTypeStr, "SINGLE", 6) == 0) {
+            singleJourneyBalance += amount;
+            saveBalances();
+            sendMessage("Single journey card topped up");
+            sendTopupRecord(TICKET_SINGLE, amount, singleJourneyBalance);
+          } 
+          else {
+            // Send more detailed error
+            char errorMsg[50];
+            sprintf(errorMsg, "Invalid card type: '%s'", cardTypeStr);
+            sendMessage(errorMsg);
+            sendError("003"); // Invalid card type
+          }
           
           sendBalanceUpdate();
         } else {
@@ -407,16 +581,34 @@ else if (strncmp(action, "TOPUP", 5) == 0) {
         sendError("001"); // Invalid command format
       }
     }
+    else if (strncmp(action, "RESET_DIST", 10) == 0) {
+      // Format: CMD:RESET_DIST,password
+      char* firstComma = strchr(action, ',');
+      
+      if (firstComma) {
+        char* password = firstComma + 1;
+        
+        if (strcmp(password, settingsPassword) == 0) {
+          resetTotalDistance();
+          sendMessage("Total distance reset successfully");
+          sendDistanceUpdate();
+        } 
+        else {
+          sendError("005"); // Authentication failed
+        }
+      } 
+      else {
+        sendError("001"); // Invalid command format
+      }
+    }
     else {
       sendError("004"); // Invalid parameters
     }
   }
 }
 
-// Display status bar (balance and current station)
+// Display status bar (balance, current station, and distance)
 void displayStatusBar() {
-  static byte statusBarState = 0;
-
   // Don't update if we're in a state where we don't want to show the status bar
   if (currentState == STATE_TOPUP_BEEP || currentState == STATE_TOPUP_SINGLE || 
       currentState == STATE_TICKET_TYPE || currentState == STATE_CARD_TYPE || 
@@ -424,42 +616,27 @@ void displayStatusBar() {
     return;
   }
 
+  lcd.clear();
   lcd.setCursor(0, 0);
-
-  // Alternating display between balance and current station
-  switch (statusBarState) {
-    case 0:
-      // Show balance info
-      lcd.print(F("B:"));
-      lcd.print(beepBalance);
-      lcd.print(F("P S:"));
-      lcd.print(singleJourneyBalance);
-      lcd.print(F("P   "));
-      break;
-
-    case 1:
-      // Show current station info
-      if (currentLine > 0) {
-        lcd.print(F("Line "));
-        if (currentLine == 1) lcd.print(F("LRT1"));
-        else if (currentLine == 2) lcd.print(F("LRT2"));
-
-        lcd.print(F(" Stn:"));
-        scrollStationName(currentLine, currentStation);
-      } else {
-        lcd.print(F("No active trip   "));
-      }
-      break;
-
-    case 2:
-      // Show user and time info
-      lcd.print(currentUser);
-      lcd.print(F("        "));
-      break;
+  lcd.print(F("B:"));
+  lcd.print(beepBalance);
+  lcd.print(F("P S:"));
+  lcd.print(singleJourneyBalance);
+  lcd.print(F("P"));
+  
+  lcd.setCursor(0, 1);
+  if (currentState == STATE_MAIN_MENU) {
+    lcd.print(F("1.Beep 2.Single"));
+  } else if (currentState == STATE_LINE_SELECT) {
+    lcd.print(F("Select line"));
+  } else if (currentState == STATE_STATION_SELECT || currentState == STATE_DEST_SELECT) {
+    char stationName[10];
+    getStationName(currentLine, currentStation, stationName);
+    lcd.print(F("Line "));
+    lcd.print(currentLine);
+    lcd.print(F(" "));
+    lcd.print(stationName);
   }
-
-  // Toggle for next display (now cycling through 3 states)
-  statusBarState = (statusBarState + 1) % 3;
 }
 
 // Display user information
@@ -469,86 +646,47 @@ void displayUserInfo() {
   lcd.print(F("User: "));
   lcd.print(currentUser);
   lcd.setCursor(0, 1);
-  lcd.print(currentDateTime);
+  lcd.print(F("Total: "));
+  lcd.print(totalDistance);
+  lcd.print(F("km"));
   delay(2000);
-}
-
-// Scroll station name if too long
-void scrollStationName(byte line, byte station) {
-  char stationName[15];
-  getStationName(line, station, stationName);
-
-  int nameLength = strlen(stationName);
-
-  // If name is shorter than display space, just print it
-  if (nameLength <= 5) {
-    lcd.print(stationName);
-    for (int i = 0; i < (5 - nameLength); i++) {
-      lcd.print(" ");
-    }
-  }
-  // Otherwise scroll it
-  else {
-    // Calculate how many positions to use for scrolling
-    int scrollMax = nameLength - 5;
-
-    // Get current scroll position
-    if (scrollPosition > scrollMax) {
-      scrollPosition = 0;
-    }
-
-    // Print substring from current scroll position
-    for (int i = 0; i < 5; i++) {
-      if ((scrollPosition + i) < nameLength) {
-        lcd.print(stationName[scrollPosition + i]);
-      } else {
-        lcd.print(" ");
-      }
-    }
-
-    // Update scroll position
-    scrollPosition++;
+  
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(currentDateTime);
+  lcd.setCursor(0, 1);
+  lcd.print(F("Press any key"));
+  
+  // Wait for any key press
+  while (!readKey()) {
+    processSerialData(); // Continue processing serial data while waiting
+    delay(10);
   }
 }
 
-// Get station name dynamically to save memory
+// Get station name from PROGMEM
 void getStationName(byte line, byte station, char* buffer) {
-  // For key transfer stations, use stored names
   if (line == 1) {
-    if (station == 0) {
-      strcpy_P(buffer, (char*)pgm_read_word(&lrt1_key_stations[0])); // Roosevelt
-    } 
-    else if (station == 9) {
-      strcpy_P(buffer, (char*)pgm_read_word(&lrt1_key_stations[1])); // Doroteo Jose
+    if (station < 20) {
+      strcpy_P(buffer, (char*)pgm_read_word(&lrt1_stations[station]));
+    } else {
+      strcpy(buffer, "Unknown");
     }
-    else if (station == 17) {
-      strcpy_P(buffer, (char*)pgm_read_word(&lrt1_key_stations[2])); // EDSA
+  } else if (line == 2) {
+    if (station < 13) {
+      strcpy_P(buffer, (char*)pgm_read_word(&lrt2_stations[station]));
+    } else {
+      strcpy(buffer, "Unknown");
     }
-    else {
-      // Generate name for other stations
-      sprintf(buffer, "LRT1-S%d", station);
-    }
-  } 
-  else if (line == 2) {
-    if (station == 0) {
-      strcpy_P(buffer, (char*)pgm_read_word(&lrt2_key_stations[0])); // Recto
-    }
-    else if (station == 7) {
-      strcpy_P(buffer, (char*)pgm_read_word(&lrt2_key_stations[1])); // Cubao
-    }
-    else {
-      // Generate name for other stations
-      sprintf(buffer, "LRT2-S%d", station);
-    }
-  } 
-  else {
+  } else {
     strcpy(buffer, "Unknown");
   }
 }
 
 // Process passenger entry at the turnstile
 void processPassengerEntry() {
-  int fare = getFare(currentLine, currentStation, destinationStation);
+  int fare = getFareFromMatrix(currentLine, currentStation, destinationStation);
+  int tripDistance = getDistanceFromMatrix(currentLine, currentStation, destinationStation);
 
   if (validateFare(fare)) {
     // Successful entry
@@ -558,19 +696,24 @@ void processPassengerEntry() {
     lcd.print(fare);
     lcd.print(F(" PHP"));
     lcd.setCursor(0, 1);
-    lcd.print(F("Access granted"));
+    lcd.print(F("Dist: "));
+    lcd.print(tripDistance);
+    lcd.print(F("km"));
 
     digitalWrite(GREEN_LED_PIN, HIGH);
     openTurnstile();
     soundBuzzer(1);  // Success pattern
 
-    // Calculate journey details
-    int distance = getDistance(currentLine, currentStation, destinationStation);
-    totalDistance += distance;
+    // Update journey details
     totalFare += fare;
+    totalDistance += tripDistance;
+    saveTotalDistance(); // Save the updated distance
+    
+    // Send distance update to Java app
+    sendDistanceUpdate();
 
     // Send trip record to Java app
-    sendTripRecord(currentLine, currentStation, destinationStation, fare, distance);
+    sendTripRecord(currentLine, currentStation, destinationStation, fare, tripDistance);
 
     // Update the current station to the destination
     currentStation = destinationStation;
@@ -588,34 +731,33 @@ void processPassengerEntry() {
     // Send updated balance to Java app
     sendBalanceUpdate();
 
+    // Change to transaction complete state with timer
+    currentState = STATE_TRANSACTION_COMPLETE;
+    stateStartTime = millis();
+
     // Wait for passenger to pass through
     delay(3000);
 
     // Check if the passenger has passed through
-    long dist = measureDistance();
-    if (dist > 30) {  // No one in front of the sensor
-      closeTurnstile();
-      digitalWrite(GREEN_LED_PIN, LOW);
-
-      // Send updated station information
-      sendStationUpdate();
-
-      // Check if current station is a transfer station
-      if (isTransferStation(currentLine, currentStation)) {
-        currentState = STATE_TRANSFER;
-        displayTransferOptions(currentLine, currentStation);
-      } else {
-        currentState = STATE_DEST_SELECT;
-        lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print(F("Current: "));
-        char stationName[15];
-        getStationName(currentLine, currentStation, stationName);
-        lcd.print(stationName);
-        lcd.setCursor(0, 1);
-        lcd.print(F("Select dest.    "));
-      }
-    }
+long dist = measureDistance();
+if (dist > 30) {  // No one in front of the sensor
+  closeTurnstile();
+  digitalWrite(GREEN_LED_PIN, LOW); // Turn off green LED
+  
+  // Check if current station is a transfer station
+  if (isTransferStation(currentLine, currentStation)) {
+    transactionInProgress = false; // Reset transaction flag first
+    currentState = STATE_TRANSFER;
+    displayTransferOptions(currentLine, currentStation);
+  } else {
+    // Stay in transaction complete state, will timeout or user can press any key
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print(F("Trip complete"));
+    lcd.setCursor(0, 1);
+    lcd.print(F("Press any key"));
+  }
+}
   } else {
     // Insufficient balance
     lcd.clear();
@@ -634,11 +776,14 @@ void processPassengerEntry() {
     
     delay(2000);
     digitalWrite(RED_LED_PIN, LOW);
+    
+    // Reset transaction flag
+    transactionInProgress = false;
 
     // Return to destination selection
     lcd.clear();
     lcd.setCursor(0, 0);
-    lcd.print(F("Select dest.    "));
+    lcd.print(F("Select dest."));
     displayStations(currentLine);
   }
 }
@@ -674,6 +819,14 @@ void processMainMenu(char key) {
     case '4':  // Exit
       lcd.clear();
       lcd.setCursor(0, 0);
+      lcd.print(F("Total Distance:"));
+      lcd.setCursor(0, 1);
+      lcd.print(totalDistance);
+      lcd.print(F(" km"));
+      delay(2000);
+      
+      lcd.clear();
+      lcd.setCursor(0, 0);
       lcd.print(F("Thank you!"));
       lcd.setCursor(0, 1);
       lcd.print(F("Goodbye!"));
@@ -683,11 +836,10 @@ void processMainMenu(char key) {
 
     case 'A':  // Display user info
       displayUserInfo();
-      delay(3000);
       displayMainMenu();
       break;
 
-    case 'D':  // New: Access settings (hidden option)
+    case 'D':  // Access settings (hidden option)
       currentState = STATE_SETTINGS;
       displaySettingsMenu();
       break;
@@ -859,20 +1011,18 @@ void processLineSelect(char key) {
       lcd.print(F("Total fare:"));
       lcd.print(totalFare);
       lcd.setCursor(0, 1);
-      lcd.print(F("Dist:"));
+      lcd.print(F("Total dist:"));
       lcd.print(totalDistance);
-      lcd.print(F("m"));
       
       // Send summary message to Java app
-      char message[40];
-      sprintf(message, "Journey complete: %dP, %dm", totalFare, totalDistance);
+      char message[60];
+      sprintf(message, "Journey complete: %dP, %dkm", totalFare, totalDistance);
       sendMessage(message);
       
       delay(3000);
 
       // Reset journey values
       totalFare = 0;
-      totalDistance = 0;
 
       currentState = STATE_MAIN_MENU;
       displayMainMenu();
@@ -908,7 +1058,7 @@ void processStationSelect(char key) {
       getStationName(currentLine, currentStation, stationName);
       lcd.print(stationName);
       lcd.setCursor(0, 1);
-      lcd.print(F("Select dest.    "));
+      lcd.print(F("Select dest."));
     }
   } else if (key == '0' && stationCount > 9) {
     // Special case for index 9
@@ -924,7 +1074,7 @@ void processStationSelect(char key) {
     getStationName(currentLine, currentStation, stationName);
     lcd.print(stationName);
     lcd.setCursor(0, 1);
-    lcd.print(F("Select dest.    "));
+    lcd.print(F("Select dest."));
   } else if (key == '*') {
     // Go back
     currentState = STATE_LINE_SELECT;
@@ -950,7 +1100,7 @@ void processStationSelect(char key) {
       getStationName(currentLine, currentStation, stationName);
       lcd.print(stationName);
       lcd.setCursor(0, 1);
-      lcd.print(F("Select dest.    "));
+      lcd.print(F("Select dest."));
     } else {
       lcd.clear();
       lcd.setCursor(0, 0);
@@ -972,6 +1122,7 @@ void processDestSelect(char key) {
 
     if (selection < stationCount && selection != currentStation) {
       destinationStation = selection;
+      int tripDistance = getDistanceFromMatrix(currentLine, currentStation, destinationStation);
 
       lcd.clear();
       lcd.setCursor(0, 0);
@@ -980,23 +1131,38 @@ void processDestSelect(char key) {
       getStationName(currentLine, destinationStation, stationName);
       lcd.print(stationName);
       lcd.setCursor(0, 1);
-      lcd.print(F("Approach gate   "));
+      lcd.print(F("Dist: "));
+      lcd.print(tripDistance);
+      lcd.print(F("km"));
 
-      int fare = getFare(currentLine, currentStation, destinationStation);
+      int fare = getFareFromMatrix(currentLine, currentStation, destinationStation);
       // Send message to Java app about selected journey
-      char message[50];
+      char message[60];
       char originName[15], destName[15];
       getStationName(currentLine, currentStation, originName);
       getStationName(currentLine, destinationStation, destName);
-      sprintf(message, "Journey: Line %d from %s to %s, Fare: %d PHP", 
-              currentLine, originName, destName, fare);
+      sprintf(message, "Journey: Line %d from %s to %s, Fare: %d PHP, Dist: %d km", 
+              currentLine, originName, destName, fare, tripDistance);
       sendMessage(message);
+      
+      // Wait briefly to show distance
+      delay(2000);
+      
+      // Prompt user to approach gate
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print(F("To: "));
+      lcd.print(stationName);
+      lcd.setCursor(0, 1);
+      lcd.print(F("Approach gate"));
     }
   } else if (key == '0' && stationCount > 9) {
     // Special case for index 9
     destinationStation = 9;
 
     if (destinationStation != currentStation) {
+      int tripDistance = getDistanceFromMatrix(currentLine, currentStation, destinationStation);
+      
       lcd.clear();
       lcd.setCursor(0, 0);
       lcd.print(F("To: "));
@@ -1004,17 +1170,30 @@ void processDestSelect(char key) {
       getStationName(currentLine, destinationStation, stationName);
       lcd.print(stationName);
       lcd.setCursor(0, 1);
-      lcd.print(F("Approach gate   "));
+      lcd.print(F("Dist: "));
+      lcd.print(tripDistance);
+      lcd.print(F("km"));
 
-      int fare = getFare(currentLine, currentStation, destinationStation);
+      int fare = getFareFromMatrix(currentLine, currentStation, destinationStation);
       // Send message to Java app about selected journey
-      char message[50];
+      char message[60];
       char originName[15], destName[15];
       getStationName(currentLine, currentStation, originName);
       getStationName(currentLine, destinationStation, destName);
-      sprintf(message, "Journey: Line %d from %s to %s, Fare: %d PHP", 
-              currentLine, originName, destName, fare);
+      sprintf(message, "Journey: Line %d from %s to %s, Fare: %d PHP, Dist: %d km", 
+              currentLine, originName, destName, fare, tripDistance);
       sendMessage(message);
+      
+      // Wait briefly to show distance
+      delay(2000);
+      
+      // Prompt user to approach gate
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print(F("To: "));
+      lcd.print(stationName);
+      lcd.setCursor(0, 1);
+      lcd.print(F("Approach gate"));
     }
   } else if (key == '*') {
     // Go back
@@ -1033,6 +1212,7 @@ void processDestSelect(char key) {
 
     if (selection > 0 && selection <= stationCount && (selection - 1) != currentStation) {
       destinationStation = selection - 1;  // Convert to 0-based
+      int tripDistance = getDistanceFromMatrix(currentLine, currentStation, destinationStation);
 
       lcd.clear();
       lcd.setCursor(0, 0);
@@ -1041,17 +1221,30 @@ void processDestSelect(char key) {
       getStationName(currentLine, destinationStation, stationName);
       lcd.print(stationName);
       lcd.setCursor(0, 1);
-      lcd.print(F("Approach gate   "));
+      lcd.print(F("Dist: "));
+      lcd.print(tripDistance);
+      lcd.print(F("km"));
 
-      int fare = getFare(currentLine, currentStation, destinationStation);
+      int fare = getFareFromMatrix(currentLine, currentStation, destinationStation);
       // Send message to Java app about selected journey
-      char message[50];
+      char message[60];
       char originName[15], destName[15];
       getStationName(currentLine, currentStation, originName);
       getStationName(currentLine, destinationStation, destName);
-      sprintf(message, "Journey: Line %d from %s to %s, Fare: %d PHP", 
-              currentLine, originName, destName, fare);
+      sprintf(message, "Journey: Line %d from %s to %s, Fare: %d PHP, Dist: %d km", 
+              currentLine, originName, destName, fare, tripDistance);
       sendMessage(message);
+      
+      // Wait briefly to show distance
+      delay(2000);
+      
+      // Prompt user to approach gate
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print(F("To: "));
+      lcd.print(stationName);
+      lcd.setCursor(0, 1);
+      lcd.print(F("Approach gate"));
     } else {
       lcd.clear();
       lcd.setCursor(0, 0);
@@ -1060,7 +1253,7 @@ void processDestSelect(char key) {
 
       lcd.clear();
       lcd.setCursor(0, 0);
-      lcd.print(F("Select dest.    "));
+      lcd.print(F("Select dest."));
       lcd.setCursor(0, 1);
       lcd.print(F("Current: "));
       char stationName[15];
@@ -1071,11 +1264,14 @@ void processDestSelect(char key) {
 }
 
 // Process transfer selection
+// Update the processTransferSelect function to improve information display
+
 void processTransferSelect(char key) {
   switch (key) {
     case '1':  // Transfer to other line
       transferToOtherLine();
       break;
+      
     case '2':  // Continue on current line
       currentState = STATE_DEST_SELECT;
       lcd.clear();
@@ -1085,9 +1281,23 @@ void processTransferSelect(char key) {
       if (currentLine == 1) lcd.print(F("LRT1"));
       else if (currentLine == 2) lcd.print(F("LRT2"));
 
+      char stationName[15];
+      getStationName(currentLine, currentStation, stationName);
+      
       lcd.setCursor(0, 1);
-      lcd.print(F("Select dest.    "));
+      lcd.print(F("At: "));
+      lcd.print(stationName);
+      
+      delay(2000);
+      
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print(F("Current: "));
+      lcd.print(stationName);
+      lcd.setCursor(0, 1);
+      lcd.print(F("Select dest."));
       break;
+      
     case '*':  // Go back to line selection
       currentState = STATE_LINE_SELECT;
       displayLineMenu();
@@ -1109,10 +1319,42 @@ void processSettingsMenu(char key) {
     case '2':  // View system info
       lcd.clear();
       lcd.setCursor(0, 0);
-      lcd.print(F("Metro Fare v2.0"));
+      lcd.print(F("Metro Fare v2.1"));
       lcd.setCursor(0, 1);
-      lcd.print(currentDateTime);
+      lcd.print(F("Total: "));
+      lcd.print(totalDistance);
+      lcd.print(F("km"));
       delay(3000);
+      displaySettingsMenu();
+      break;
+      
+    case '3':  // Reset distance
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print(F("Enter password:"));
+      lcd.setCursor(0, 1);
+      char* enteredPassword = readPassword(4);
+      
+      // Check password
+      if (authenticateUser(enteredPassword)) {
+        resetTotalDistance();
+        sendMessage("Total distance reset successfully");
+        sendDistanceUpdate();
+
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print(F("Distance reset"));
+        lcd.setCursor(0, 1);
+        lcd.print(F("successfully"));
+        delay(2000);
+      } else {
+        sendMessage("Reset attempt failed - wrong password");
+        
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print(F("Invalid password"));
+        delay(2000);
+      }
       displaySettingsMenu();
       break;
 
@@ -1167,6 +1409,12 @@ void resetBalances() {
   saveBalances();
 }
 
+// Reset total distance
+void resetTotalDistance() {
+  totalDistance = 0;
+  saveTotalDistance();
+}
+
 // Read password with asterisk masking
 char* readPassword(byte maxDigits) {
   static char password[10];
@@ -1174,7 +1422,13 @@ char* readPassword(byte maxDigits) {
 
   lcd.setCursor(0, 1);
 
-  while (true) {
+  // Reset password buffer
+  memset(password, 0, sizeof(password));
+
+  unsigned long passwordStartTime = millis();
+  boolean timeoutOccurred = false;
+
+  while (!timeoutOccurred) {
     char key = keypad.getKey();
 
     if (key) {
@@ -1212,7 +1466,17 @@ char* readPassword(byte maxDigits) {
     // Also check for serial commands
     processSerialData();
     
+    // Check for timeout
+    if ((millis() - passwordStartTime) > 30000) { // 30 seconds timeout
+      timeoutOccurred = true;
+    }
+    
     delay(10);  // Small delay to prevent bouncing
+  }
+
+  // If timeout occurred, return empty string
+  if (timeoutOccurred) {
+    password[0] = '\0';
   }
 
   return password;
@@ -1224,10 +1488,14 @@ bool authenticateUser(const char* enteredPassword) {
 }
 
 // Transfer to another line based on the current transfer station
+// Transfer to another line based on the current transfer station
+// Update the transferToOtherLine() function to improve display information:
+
 void transferToOtherLine() {
   byte prevLine = currentLine;
-  char stationName[15];
-  getStationName(currentLine, currentStation, stationName);
+  byte prevStation = currentStation;
+  char prevStationName[15];
+  getStationName(prevLine, prevStation, prevStationName);
 
   // LRT1 Doroteo Jose -> LRT2 Recto
   if (currentLine == 1 && currentStation == 9) {  // Doroteo Jose
@@ -1248,65 +1516,119 @@ void transferToOtherLine() {
   // Send updated station to Java app
   sendStationUpdate();
 
-  // Send transfer message
-  char message[40];
+  // Get current station name
   char newStationName[15];
   getStationName(currentLine, currentStation, newStationName);
-  sprintf(message, "Transfer: Line %d to Line %d at %s", 
-          prevLine, currentLine, newStationName);
+
+  // Send transfer message
+  char message[60];
+  sprintf(message, "Transfer: Line %d (%s) to Line %d (%s)", 
+          prevLine, prevStationName, currentLine, newStationName);
   sendMessage(message);
 
+  // Display transfer information with clearer formatting
   lcd.clear();
   lcd.setCursor(0, 0);
-  if (prevLine == 1) lcd.print(F("LRT1>"));
-  else if (prevLine == 2) lcd.print(F("LRT2>"));
-
-  if (currentLine == 1) lcd.print(F("LRT1"));
-  else if (currentLine == 2) lcd.print(F("LRT2"));
-
+  lcd.print(F("Transferred to:"));
   lcd.setCursor(0, 1);
-  lcd.print(F("Now at: "));
+  lcd.print(F("Line "));
+  lcd.print(currentLine);
+  lcd.print(F(": "));
   lcd.print(newStationName);
-
   delay(2000);
 
+  // Now show available stations on this line
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  if (currentLine == 1) {
+    lcd.print(F("LRT1 line: 20 stn"));
+  } else {
+    lcd.print(F("LRT2 line: 13 stn"));
+  }
+  lcd.setCursor(0, 1);
+  lcd.print(F("Current: "));
+  lcd.print(newStationName);
+  delay(2000);
+
+  // Show first few stations on this line for context
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(F("Stations:"));
+  lcd.setCursor(0, 1);
+  
+  // Show first 3 stations on this line
+  byte maxToShow = min(3, stationCount);
+  for (byte i = 0; i < maxToShow; i++) {
+    char stnName[15];
+    getStationName(currentLine, i, stnName);
+    
+    // Only show first 5 chars of each station name to fit on LCD
+    char shortStnName[6];
+    strncpy(shortStnName, stnName, 5);
+    shortStnName[5] = '\0';
+    
+    lcd.print(shortStnName);
+    if (i < maxToShow - 1) {
+      lcd.print(",");
+    }
+  }
+  lcd.print(F("..."));
+  delay(2000);
+
+  // Transition to destination selection
   currentState = STATE_DEST_SELECT;
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print(F("Select dest."));
+  lcd.print(F("Line "));
+  lcd.print(currentLine);
+  lcd.print(F(": "));
+  lcd.print(newStationName);
   lcd.setCursor(0, 1);
-  lcd.print(F("on new line"));
+  lcd.print(F("Select dest."));
 }
 
 // Check if station is a transfer point
+// Check if station is a transfer point
 bool isTransferStation(byte line, byte station) {
+  // Debug message to help troubleshoot
+  char stationName[15];
+  getStationName(line, station, stationName);
+  char debugMsg[50];
+  sprintf(debugMsg, "Checking transfer: Line %d, Station %d (%s)", line, station, stationName);
+  sendMessage(debugMsg);
+  
   if (line == 1) {
-    // Check for Doroteo Jose (transfer to LRT2 Recto)
-    return (station == 9);
+    // Check for Doroteo Jose (index 9 in LRT1) -> transfer to LRT2 Recto
+    if (station == 9) {
+      sendMessage("Transfer point detected: Doroteo Jose to Recto");
+      return true;
+    }
   } else if (line == 2) {
-    // Check for Recto (transfer to LRT1 Doroteo Jose)
-    return (station == 0);
+    // Check for Recto (index 0 in LRT2) -> transfer to LRT1 Doroteo Jose
+    if (station == 0) {
+      sendMessage("Transfer point detected: Recto to Doroteo Jose");
+      return true;
+    }
   }
   return false;
 }
 
-// Get fare between two stations - simplified to save memory
-int getFare(byte line, byte origin, byte dest) {
-  // Calculate distance between stations
-  int distance = getDistance(line, origin, dest);
-  int fare;
+// Get fare directly from fare matrix
+int getFareFromMatrix(byte line, byte origin, byte dest) {
+  int fare = 0;
   
-  // Simplified fare calculation based on distance
-  if (distance < 1000) {
-    fare = pgm_read_byte(&fare_base[0]); // Base fare for short trips
-  } else if (distance < 3000) {
-    fare = pgm_read_byte(&fare_base[1]);
-  } else if (distance < 6000) {
-    fare = pgm_read_byte(&fare_base[2]);
-  } else if (distance < 10000) {
-    fare = pgm_read_byte(&fare_base[3]);
-  } else {
-    fare = pgm_read_byte(&fare_base[4]);
+  if (line == 1) {
+    // LRT1 fare matrix is 20x20
+    if (origin < 20 && dest < 20) {
+      int matrixIndex = origin * 20 + dest;
+      fare = pgm_read_byte(&lrt1_fare_matrix[matrixIndex]);
+    }
+  } else if (line == 2) {
+    // LRT2 fare matrix is 13x13
+    if (origin < 13 && dest < 13) {
+      int matrixIndex = origin * 13 + dest;
+      fare = pgm_read_byte(&lrt2_fare_matrix[matrixIndex]);
+    }
   }
 
   // Apply discounts
@@ -1319,19 +1641,21 @@ int getFare(byte line, byte origin, byte dest) {
   return fare;
 }
 
-// Calculate distance between stations
-int getDistance(byte line, byte start, byte end) {
+// Get distance from distance matrix
+int getDistanceFromMatrix(byte line, byte origin, byte dest) {
   int distance = 0;
-  byte startIdx = min(start, end);
-  byte endIdx = max(start, end);
-
+  
   if (line == 1) {
-    for (byte i = startIdx; i < endIdx; i++) {
-      distance += pgm_read_word(&lrt1_distances[i]);
+    // LRT1 distance matrix is 20x20
+    if (origin < 20 && dest < 20) {
+      int matrixIndex = origin * 20 + dest;
+      distance = pgm_read_byte(&lrt1_distance_matrix[matrixIndex]);
     }
   } else if (line == 2) {
-    for (byte i = startIdx; i < endIdx; i++) {
-      distance += pgm_read_word(&lrt2_distances[i]);
+    // LRT2 distance matrix is 13x13
+    if (origin < 13 && dest < 13) {
+      int matrixIndex = origin * 13 + dest;
+      distance = pgm_read_byte(&lrt2_distance_matrix[matrixIndex]);
     }
   }
 
@@ -1371,23 +1695,79 @@ void loadBalances() {
   }
 }
 
-// Save balance values to EEPROM
+// Save balance values to EEPROM (minimizing writes)
 void saveBalances() {
-  // Save beep balance (4 bytes)
+  // Read current stored values first
+  int storedBeep = 0;
+  int storedSingle = 0;
+  
   for (byte i = 0; i < 4; i++) {
-    EEPROM.write(BEEP_BALANCE_ADDR + i, (beepBalance >> (8 * (3 - i))) & 0xFF);
+    storedBeep = (storedBeep << 8) + EEPROM.read(BEEP_BALANCE_ADDR + i);
+    storedSingle = (storedSingle << 8) + EEPROM.read(SINGLE_BALANCE_ADDR + i);
+  }
+  
+  // Only write if values have changed
+  if (storedBeep != beepBalance) {
+    // Save beep balance (4 bytes)
+    for (byte i = 0; i < 4; i++) {
+      EEPROM.write(BEEP_BALANCE_ADDR + i, (beepBalance >> (8 * (3 - i))) & 0xFF);
+    }
+  }
+  
+  if (storedSingle != singleJourneyBalance) {
+    // Save single journey balance (4 bytes)
+    for (byte i = 0; i < 4; i++) {
+      EEPROM.write(SINGLE_BALANCE_ADDR + i, (singleJourneyBalance >> (8 * (3 - i))) & 0xFF);
+    }
+  }
+}
+
+// Load total distance from EEPROM
+void loadTotalDistance() {
+  // Read total distance (stored as 4 bytes)
+  totalDistance = 0;
+  for (byte i = 0; i < 4; i++) {
+    totalDistance = (totalDistance << 8) + EEPROM.read(TOTAL_DISTANCE_ADDR + i);
   }
 
-  // Save single journey balance (4 bytes)
+  // Initial value if EEPROM is empty (first run)
+  if (totalDistance > 10000 || totalDistance < 0) {
+    totalDistance = 0;  // Default starting value
+  }
+}
+
+// Save total distance to EEPROM (minimizing writes)
+void saveTotalDistance() {
+  // Read current stored value first
+  int storedDistance = 0;
+  
   for (byte i = 0; i < 4; i++) {
-    EEPROM.write(SINGLE_BALANCE_ADDR + i, (singleJourneyBalance >> (8 * (3 - i))) & 0xFF);
+    storedDistance = (storedDistance << 8) + EEPROM.read(TOTAL_DISTANCE_ADDR + i);
+  }
+  
+  // Only write if value has changed
+  if (storedDistance != totalDistance) {
+    // Save total distance (4 bytes)
+    for (byte i = 0; i < 4; i++) {
+      EEPROM.write(TOTAL_DISTANCE_ADDR + i, (totalDistance >> (8 * (3 - i))) & 0xFF);
+    }
   }
 }
 
 // Save current station and line to EEPROM
 void saveCurrentStation() {
-  EEPROM.write(CURRENT_LINE_ADDR, currentLine);
-  EEPROM.write(CURRENT_STATION_ADDR, currentStation);
+  // Read current stored values first
+  byte storedLine = EEPROM.read(CURRENT_LINE_ADDR);
+  byte storedStation = EEPROM.read(CURRENT_STATION_ADDR);
+  
+  // Only write if values have changed
+  if (storedLine != currentLine) {
+    EEPROM.write(CURRENT_LINE_ADDR, currentLine);
+  }
+  
+  if (storedStation != currentStation) {
+    EEPROM.write(CURRENT_STATION_ADDR, currentStation);
+  }
 }
 
 // Load current station and line from EEPROM
@@ -1414,9 +1794,13 @@ void loadCurrentStation() {
 void displayMainMenu() {
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print(F("1.Beep 2.Single"));
+  lcd.print(F("B:"));
+  lcd.print(beepBalance);
+  lcd.print(F("P S:"));
+  lcd.print(singleJourneyBalance);
+  lcd.print(F("P"));
   lcd.setCursor(0, 1);
-  lcd.print(F("3.Start 4.Exit"));
+  lcd.print(F("1.Beep 2.Single"));
   currentState = STATE_MAIN_MENU;
 }
 
@@ -1453,23 +1837,41 @@ void displaySettingsMenu() {
   lcd.setCursor(0, 0);
   lcd.print(F("Settings Menu:"));
   lcd.setCursor(0, 1);
-  lcd.print(F("1.Reset 2.Info"));
+  lcd.print(F("1.Reset 2.Info 3.Dist"));
 }
 
 // Display transfer options menu
+// Update the displayTransferOptions function for clearer information
+
 void displayTransferOptions(byte line, byte station) {
+  char stationName[15];
+  getStationName(line, station, stationName);
+  
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print(F("Transfer Point:"));
-
+  lcd.print(F("At: "));
+  lcd.print(stationName);
+  
   lcd.setCursor(0, 1);
-  lcd.print(F("1.Trans 2.Stay"));
+  if (line == 1) {
+    lcd.print(F("1.To LRT2  2.Stay"));
+  } else {
+    lcd.print(F("1.To LRT1  2.Stay"));
+  }
+
+  // Send additional information to Java app about available transfer
+  char message[50];
+  if (line == 1) {
+    sprintf(message, "Transfer available: LRT1 to LRT2 at %s", stationName);
+  } else {
+    sprintf(message, "Transfer available: LRT2 to LRT1 at %s", stationName);
+  }
+  sendMessage(message);
 }
 
 // Display stations for the selected line
 void displayStations(byte line) {
   // Only display the first few stations on LCD
-  // User can scroll or enter station number directly
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print(F("Enter station #"));
@@ -1502,25 +1904,36 @@ void displayStations(byte line) {
 
 // Read a key from keypad with timeout
 char readKey() {
-  char key = keypad.getKey();
-  if (key) {
-    // Make a beep sound for button press feedback
-    digitalWrite(BUZZER_PIN, HIGH);
-    delay(50);
-    digitalWrite(BUZZER_PIN, LOW);
+  unsigned long startTime = millis();
+  char key = 0;
+  
+  // Wait up to 50ms for a key press
+  while ((millis() - startTime) < 50) {
+    key = keypad.getKey();
+    if (key) {
+      // Make a beep sound for button press feedback
+      digitalWrite(BUZZER_PIN, HIGH);
+      delay(50);
+      digitalWrite(BUZZER_PIN, LOW);
+      break;
+    }
+    delay(1); // Small delay to prevent hogging CPU
   }
   return key;
 }
 
-// Read a multi-digit number from the keypad
+// Read a multi-digit number from the keypad with timeout
 int readNumber(byte maxDigits) {
   char input[5] = "";
   byte inputIndex = 0;
 
   lcd.setCursor(0, 1);
   lcd.print(">");
+  
+  unsigned long inputStartTime = millis();
+  boolean timeoutOccurred = false;
 
-  while (true) {
+  while (!timeoutOccurred) {
     char key = keypad.getKey();
 
     if (key) {
@@ -1528,6 +1941,9 @@ int readNumber(byte maxDigits) {
       digitalWrite(BUZZER_PIN, HIGH);
       delay(50);
       digitalWrite(BUZZER_PIN, LOW);
+      
+      // Reset timeout timer on input
+      inputStartTime = millis();
 
       if (key >= '0' && key <= '9' && inputIndex < maxDigits) {
         input[inputIndex++] = key;
@@ -1554,6 +1970,11 @@ int readNumber(byte maxDigits) {
     // Also check for serial commands while waiting for keypad input
     processSerialData();
     
+    // Check for timeout (30 seconds)
+    if ((millis() - inputStartTime) > 30000) {
+      timeoutOccurred = true;
+    }
+    
     delay(10);  // Small delay to prevent bouncing
   }
 
@@ -1577,29 +1998,50 @@ void closeTurnstile() {
   sendMessage("Turnstile closed");
 }
 
-// Measure distance using ultrasonic sensor
+// Measure distance using ultrasonic sensor with debouncing
 long measureDistance() {
-  // Clear trigger pin
-  digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(2);
+  // Take multiple readings and average them for debouncing
+  long totalDistance = 0;
+  byte validReadings = 0;
+  const byte numReadings = 3;
+  
+  for (byte i = 0; i < numReadings; i++) {
+    // Clear trigger pin
+    digitalWrite(TRIG_PIN, LOW);
+    delayMicroseconds(2);
 
-  // Send 10μs pulse to trigger
-  digitalWrite(TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
+    // Send 10μs pulse to trigger
+    digitalWrite(TRIG_PIN, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(TRIG_PIN, LOW);
 
-  // Measure duration of echo pulse with timeout for better performance
-  long duration = pulseIn(ECHO_PIN, HIGH, 10000);
+    // Measure duration of echo pulse with timeout for better performance
+    long duration = pulseIn(ECHO_PIN, HIGH, 10000);
 
-  // Check if timeout occurred
-  if (duration == 0) {
-    return -1;  // No echo received
+    // Check if timeout occurred
+    if (duration > 0) {
+      // Calculate distance in cm
+      // Sound travels at 343m/s, or 0.0343cm/μs
+      // Time is round-trip, so divide by 2
+      long distance = duration * 0.0343 / 2;
+      
+      // Only include reasonable readings (0-200cm)
+      if (distance > 0 && distance < 200) {
+        totalDistance += distance;
+        validReadings++;
+      }
+      
+      // Small delay between readings
+      delay(10);
+    }
   }
-
-  // Calculate distance in cm
-  // Sound travels at 343m/s, or 0.0343cm/μs
-  // Time is round-trip, so divide by 2
-  return duration * 0.0343 / 2;
+  
+  // Return average if we have valid readings, otherwise -1
+  if (validReadings > 0) {
+    return totalDistance / validReadings;
+  } else {
+    return -1;  // No valid readings
+  }
 }
 
 // Sound buzzer in different patterns for different events
@@ -1641,15 +2083,21 @@ void sendBalanceUpdate() {
 
 // Send current station update to Java app
 void sendStationUpdate() {
-  char stationName[15];
-  getStationName(currentLine, currentStation, stationName);
-  
   Serial.print(F("STN:"));
   Serial.print(currentLine);
   Serial.print(F(","));
   Serial.print(currentStation);
   Serial.print(F(","));
+  
+  char stationName[15];
+  getStationName(currentLine, currentStation, stationName);
   Serial.println(stationName);
+}
+
+// Send distance update to Java app
+void sendDistanceUpdate() {
+  Serial.print(F("DIST:"));
+  Serial.println(totalDistance);
 }
 
 // Send user info to Java app
