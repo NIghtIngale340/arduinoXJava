@@ -259,9 +259,20 @@ public class FareSystemApp extends Application {
 
     private void handleTopup() {
         try {
-            int amount = Integer.parseInt(topupAmountField.getText());
+            String amountText = topupAmountField.getText().trim();
+            if (amountText.isEmpty()) {
+                log("Error: Please enter an amount");
+                return;
+            }
+            
+            int amount = Integer.parseInt(amountText);
             if (amount <= 0) {
-                log("Error: Amount must be positive");
+                log("Error: Amount must be greater than 0");
+                return;
+            }
+            
+            if (amount > 10000) {
+                log("Error: Maximum top-up amount is 10,000 PHP");
                 return;
             }
 
@@ -269,7 +280,7 @@ public class FareSystemApp extends Application {
             sendCommand(String.format("CMD:TOPUP,%s,%d", cardType, amount));
             topupAmountField.clear();
         } catch (NumberFormatException e) {
-            log("Error: Invalid amount format");
+            log("Error: Please enter a valid number");
         }
     }
 

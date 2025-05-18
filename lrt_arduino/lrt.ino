@@ -335,37 +335,49 @@ void handleSerialCommand(char* command) {
       // Send current user info
       sendUserInfo();
     }
-    else if (strncmp(action, "TOPUP", 5) == 0) {
-      // Format: CMD:TOPUP,BEEP|SINGLE,amount
-      char* firstComma = strchr(action, ',');
-      if (firstComma) {
-        char* secondComma = strchr(firstComma + 1, ',');
-        if (secondComma) {
-          *secondComma = '\0'; // Temporarily null-terminate for comparison
-          char* cardTypeStr = firstComma + 1;
-          int amount = atoi(secondComma + 1);
-          *secondComma = ','; // Restore the comma
-          
-          if (amount <= 0) {
-            sendError("002"); // Invalid amount
-            return;
-          }
-          
-          if (strcmp(cardTypeStr, "BEEP") == 0) {
-            beepBalance += amount;
-            saveBalances();
-            sendMessage("Beep card topped up");
-            sendTopupRecord(TICKET_BEEP, amount, beepBalance);
-          } 
-          else if (strcmp(cardTypeStr, "SINGLE") == 0) {
-            singleJourneyBalance += amount;
-            saveBalances();
-            sendMessage("Single journey card topped up");
-            sendTopupRecord(TICKET_SINGLE, amount, singleJourneyBalance);
-          } 
-          else {
-            sendError("003"); // Invalid card type
-          }
+else if (strncmp(action, "TOPUP", 5) == 0) {
+  // Format: CMD:TOPUP,BEEP|SINGLE,amount
+  char* firstComma = strchr(action, ',');
+  if (firstComma) {
+    char* secondComma = strchr(firstComma + 1, ',');
+    if (secondComma) {
+      *secondComma = '\0'; // Temporarily null-terminate for comparison
+      char* cardTypeStr = firstComma + 1;
+      int amount = atoi(secondComma + 1);
+      *secondComma = ','; // Restore the comma
+      
+      if (amount <= 0) {
+        sendError("002"); // Invalid amount
+        return;
+      }
+      
+      // Add debug message to see what's being received
+      char debugMsg[50];
+      sprintf(debugMsg, "Received card type: '%s'", cardTypeStr);
+      sendMessage(debugMsg);
+      
+      // Trim any leading/trailing whitespace and convert to uppercase for more robust comparison
+      while (*cardTypeStr == ' ') cardTypeStr++; // Skip leading spaces
+      
+      if (strncmp(cardTypeStr, "BEEP", 4) == 0) {
+        beepBalance += amount;
+        saveBalances();
+        sendMessage("Beep card topped up");
+        sendTopupRecord(TICKET_BEEP, amount, beepBalance);
+      } 
+      else if (strncmp(cardTypeStr, "SINGLE", 6) == 0) {
+        singleJourneyBalance += amount;
+        saveBalances();
+        sendMessage("Single journey card topped up");
+        sendTopupRecord(TICKET_SINGLE, amount, singleJourneyBalance);
+      } 
+      else {
+        // Send more detailed error
+        char errorMsg[50];
+        sprintf(errorMsg, "Invalid card type: '%s'", cardTypeStr);
+        sendMessage(errorMsg);
+        sendError("003"); // Invalid card type
+      }
           
           sendBalanceUpdate();
         } else {
