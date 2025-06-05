@@ -11,6 +11,7 @@ public class FareSystemState {
     private String currentStationName;
     private String currentUser;
     private String currentDateTime;
+    private int totalDistance;
     private List<TripRecord> tripRecords;
     private List<TopupRecord> topupRecords;
 
@@ -22,6 +23,7 @@ public class FareSystemState {
         this.currentStationName = "None";
         this.currentUser = "";
         this.currentDateTime = "";
+        this.totalDistance = 0;
         this.tripRecords = new ArrayList<>();
         this.topupRecords = new ArrayList<>();
     }
@@ -80,6 +82,14 @@ public class FareSystemState {
 
     public void setCurrentDateTime(String currentDateTime) {
         this.currentDateTime = currentDateTime;
+    }
+
+    public int getTotalDistance() {
+        return totalDistance;
+    }
+
+    public void setTotalDistance(int totalDistance) {
+        this.totalDistance = totalDistance;
     }
 
     public List<TripRecord> getTripRecords() {

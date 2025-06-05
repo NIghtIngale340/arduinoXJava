@@ -1,94 +1,158 @@
 package com.securitysystem.fare;
 
+import java.awt.BorderLayout;
+import java.awt.FlowLayout;
+import java.awt.GridLayout;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
+import javax.swing.BorderFactory;
+import javax.swing.JButton;
+import javax.swing.JComboBox;
+import javax.swing.JDialog;
+import javax.swing.JFileChooser;
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.JList;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JPasswordField;
+import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
+import javax.swing.JTextField;
+import javax.swing.ListSelectionModel;
+import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
+import javax.swing.UnsupportedLookAndFeelException;
+import javax.swing.filechooser.FileNameExtensionFilter;
+
 import com.fazecast.jSerialComm.SerialPort;
 
-import javafx.application.Application;
-import javafx.application.Platform;
-import javafx.geometry.Insets;
-import javafx.scene.Scene;
-import javafx.scene.control.Button;
-import javafx.scene.control.ComboBox;
-import javafx.scene.control.Label;
-import javafx.scene.control.PasswordField;
-import javafx.scene.control.TextArea;
-import javafx.scene.control.TextField;
-import javafx.scene.layout.BorderPane;
-import javafx.scene.layout.HBox;
-import javafx.scene.layout.VBox;
-import javafx.stage.Stage;
-
-public class FareSystemApp extends Application {
+public class FareSystemApp extends JFrame {
+    private static final long serialVersionUID = 1L;
+    
     private SerialPort serialPort;
-    private TextArea logArea;
-    private Label beepBalanceLabel;
-    private Label singleBalanceLabel;
-    private Label currentStationLabel;
-    private TextField topupAmountField;
-    private ComboBox<String> cardTypeCombo;
+    private JTextArea logArea;
+    private JLabel beepBalanceLabel;
+    private JLabel singleBalanceLabel;
+    private JLabel currentStationLabel;
+    private JTextField topupAmountField;
+    private JComboBox<String> cardTypeCombo;
     private ScheduledExecutorService executor;
     private FareSystemState state;
 
-    @Override
-    public void start(Stage primaryStage) {
+    public FareSystemApp() {
+        // Initialize the state
         state = new FareSystemState();
         
-        // Create the main layout
-        BorderPane root = new BorderPane();
-        root.setPadding(new Insets(10));
-
-        // Create the top section with balances and current station
-        HBox topBox = new HBox(20);
-        beepBalanceLabel = new Label("Beep Balance: 0 PHP");
-        singleBalanceLabel = new Label("Single Balance: 0 PHP");
-        currentStationLabel = new Label("Current Station: None");
-        topBox.getChildren().addAll(beepBalanceLabel, singleBalanceLabel, currentStationLabel);
-        root.setTop(topBox);
-
-        // Create the center section with log area
-        logArea = new TextArea();
-        logArea.setEditable(false);
-        logArea.setPrefRowCount(10);
-        root.setCenter(logArea);
-
-        // Create the bottom section with controls
-        VBox bottomBox = new VBox(10);
+        // Set up the frame
+        setTitle("Metro Fare System");
+        setSize(600, 400);
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setLocationRelativeTo(null);
         
-        // Top-up controls
-        HBox topupBox = new HBox(10);
-        Label topupLabel = new Label("Top-up Amount:");
-        topupAmountField = new TextField();
-        topupAmountField.setPrefWidth(100);
-        cardTypeCombo = new ComboBox<>();
-        cardTypeCombo.getItems().addAll("Beep Card", "Single Journey");
-        cardTypeCombo.setValue("Beep Card");
-        Button topupButton = new Button("Top-up");
-        topupButton.setOnAction(e -> handleTopup());
-        topupBox.getChildren().addAll(topupLabel, topupAmountField, cardTypeCombo, topupButton);
+        // Add window closing listener to clean up resources
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                if (executor != null) {
+                    executor.shutdown();
+                }
+                if (serialPort != null && serialPort.isOpen()) {
+                    serialPort.closePort();
+                }
+            }
+        });
         
-        // Reset controls
-        HBox resetBox = new HBox(10);
-        Label passwordLabel = new Label("Admin Password:");
-        PasswordField passwordField = new PasswordField();
-        passwordField.setPrefWidth(100);
-        Button resetButton = new Button("Reset Balances");
-        resetButton.setOnAction(e -> handleReset(passwordField.getText()));
-        resetBox.getChildren().addAll(passwordLabel, passwordField, resetButton);
+        // Create the UI components
+        createUI();
         
-        bottomBox.getChildren().addAll(topupBox, resetBox);
-        root.setBottom(bottomBox);
-
-        // Create the scene
-        Scene scene = new Scene(root, 600, 400);
-        primaryStage.setTitle("Metro Fare System");
-        primaryStage.setScene(scene);
-        primaryStage.show();
-
         // Initialize serial communication
         initializeSerial();
+    }
+    
+    private void createUI() {
+        // Main panel with BorderLayout
+        JPanel mainPanel = new JPanel(new BorderLayout(10, 10));
+        mainPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        
+        // Top panel with status information
+        JPanel topPanel = new JPanel(new GridLayout(1, 3, 10, 0));
+        beepBalanceLabel = new JLabel("Beep Balance: 0 PHP");
+        singleBalanceLabel = new JLabel("Single Balance: 0 PHP");
+        currentStationLabel = new JLabel("Current Station: None");
+        topPanel.add(beepBalanceLabel);
+        topPanel.add(singleBalanceLabel);
+        topPanel.add(currentStationLabel);
+        
+        // Center panel with log area
+        logArea = new JTextArea();
+        logArea.setEditable(false);
+        JScrollPane scrollPane = new JScrollPane(logArea);
+        
+        // Bottom panel with controls
+        JPanel bottomPanel = new JPanel(new GridLayout(2, 1, 0, 10));
+        
+        // Top-up panel
+        JPanel topupPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        topupPanel.add(new JLabel("Top-up Amount:"));
+        topupAmountField = new JTextField(8);
+        topupPanel.add(topupAmountField);
+        
+        cardTypeCombo = new JComboBox<>(new String[]{"Beep Card", "Single Journey"});
+        topupPanel.add(cardTypeCombo);
+        
+        JButton topupButton = new JButton("Top-up");
+        topupButton.addActionListener(e -> handleTopup());
+        topupPanel.add(topupButton);
+        
+        // Reset panel
+        JPanel resetPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        resetPanel.add(new JLabel("Admin Password:"));
+        JPasswordField passwordField = new JPasswordField(8);
+        resetPanel.add(passwordField);
+        
+        JButton resetButton = new JButton("Reset Balances");
+        resetButton.addActionListener(e -> handleReset(new String(passwordField.getPassword())));
+        resetPanel.add(resetButton);
+        
+        // Add distance reset button
+        JButton resetDistButton = new JButton("Reset Distance");
+        resetDistButton.addActionListener(e -> {
+            String password = JOptionPane.showInputDialog(this, 
+                "Enter admin password to reset distance:", 
+                "Reset Distance", JOptionPane.QUESTION_MESSAGE);
+            if (password != null && !password.isEmpty()) {
+                sendCommand("CMD:RESET_DIST," + password);
+            } else {
+                log("Error: Password required");
+            }
+        });
+        resetPanel.add(resetDistButton);
+        
+        // Add history button
+        JButton historyButton = new JButton("History");
+        historyButton.addActionListener(e -> showHistoryDialog());
+        resetPanel.add(historyButton);
+        
+        // Add panels to the bottom panel
+        bottomPanel.add(topupPanel);
+        bottomPanel.add(resetPanel);
+        
+        // Add components to the main panel
+        mainPanel.add(topPanel, BorderLayout.NORTH);
+        mainPanel.add(scrollPane, BorderLayout.CENTER);
+        mainPanel.add(bottomPanel, BorderLayout.SOUTH);
+        
+        // Set the content pane
+        setContentPane(mainPanel);
     }
 
     private void initializeSerial() {
@@ -126,6 +190,7 @@ public class FareSystemApp extends Application {
         sendCommand("CMD:GET_BAL");
         sendCommand("CMD:GET_STN");
         sendCommand("CMD:GET_USER");
+        sendCommand("CMD:GET_DIST");
     }
 
     private void readSerial() {
@@ -138,7 +203,7 @@ public class FareSystemApp extends Application {
             for (String line : data.split("\n")) {
                 if (line.trim().isEmpty()) continue;
                 
-                Platform.runLater(() -> {
+                SwingUtilities.invokeLater(() -> {
                     if (line.startsWith("BAL:")) {
                         handleBalanceUpdate(line.substring(4));
                     } else if (line.startsWith("STN:")) {
@@ -153,6 +218,8 @@ public class FareSystemApp extends Application {
                         handleMessage(line.substring(4));
                     } else if (line.startsWith("ERR:")) {
                         handleError(line.substring(4));
+                    } else if (line.startsWith("DIST:")) {
+                        handleDistanceUpdate(line.substring(5));
                     }
                 });
             }
@@ -184,6 +251,19 @@ public class FareSystemApp extends Application {
             state.setCurrentStation(station);
             state.setCurrentStationName(stationName);
             updateStationDisplay();
+        }
+    }
+    
+    private void handleDistanceUpdate(String data) {
+        try {
+            int totalDistance = Integer.parseInt(data.trim());
+            // Only log if the distance has changed
+            if (totalDistance != state.getTotalDistance()) {
+                log("Total distance traveled: " + totalDistance + " km");
+                state.setTotalDistance(totalDistance);
+            }
+        } catch (NumberFormatException e) {
+            log("Error parsing distance data: " + data);
         }
     }
 
@@ -276,9 +356,9 @@ public class FareSystemApp extends Application {
                 return;
             }
 
-            String cardType = cardTypeCombo.getValue().equals("Beep Card") ? "BEEP" : "SINGLE";
+            String cardType = cardTypeCombo.getSelectedItem().equals("Beep Card") ? "BEEP" : "SINGLE";
             sendCommand(String.format("CMD:TOPUP,%s,%d", cardType, amount));
-            topupAmountField.clear();
+            topupAmountField.setText("");
         } catch (NumberFormatException e) {
             log("Error: Please enter a valid number");
         }
@@ -299,20 +379,262 @@ public class FareSystemApp extends Application {
     }
 
     private void log(String message) {
-        logArea.appendText(message + "\n");
+        logArea.append(message + "\n");
+        // Auto-scroll to the bottom
+        logArea.setCaretPosition(logArea.getDocument().getLength());
+    }
+    
+    // Getter for state (for testing purposes)
+    public FareSystemState getFareSystemState() {
+        return state;
     }
 
-    @Override
-    public void stop() {
-        if (executor != null) {
-            executor.shutdown();
+    private void showHistoryDialog() {
+        JDialog historyDialog = new JDialog(this, "Trip History", true);
+        historyDialog.setSize(800, 600);
+        historyDialog.setLocationRelativeTo(this);
+        
+        // Main panel with BorderLayout
+        JPanel mainPanel = new JPanel(new BorderLayout(10, 10));
+        mainPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        
+        // Summary panel at the top
+        JPanel summaryPanel = createSummaryPanel();
+        
+        // Trip list in the center
+        JPanel tripListPanel = createTripListPanel();
+        
+        // Button panel at the bottom
+        JPanel buttonPanel = createHistoryButtonPanel(historyDialog);
+        
+        mainPanel.add(summaryPanel, BorderLayout.NORTH);
+        mainPanel.add(tripListPanel, BorderLayout.CENTER);
+        mainPanel.add(buttonPanel, BorderLayout.SOUTH);
+        
+        historyDialog.setContentPane(mainPanel);
+        historyDialog.setVisible(true);
+    }
+    
+    private JPanel createSummaryPanel() {
+        JPanel summaryPanel = new JPanel(new GridLayout(1, 3, 20, 5));
+        summaryPanel.setBorder(BorderFactory.createTitledBorder("Trip Summary"));
+        
+        int totalTrips = state.getTripRecords().size();
+        int totalFare = state.getTripRecords().stream().mapToInt(TripRecord::getFare).sum();
+        int totalDistance = state.getTripRecords().stream().mapToInt(TripRecord::getDistance).sum();
+        
+        // Create individual summary cards
+        JPanel tripsCard = createSummaryCard("Total Trips", String.valueOf(totalTrips), "🚇");
+        JPanel fareCard = createSummaryCard("Total Fare", "₱" + totalFare, "💰");
+        JPanel distanceCard = createSummaryCard("Total Distance", totalDistance + " km", "📏");
+        
+        summaryPanel.add(tripsCard);
+        summaryPanel.add(fareCard);
+        summaryPanel.add(distanceCard);
+        
+        return summaryPanel;
+    }
+    
+    private JPanel createSummaryCard(String title, String value, String icon) {
+        JPanel card = new JPanel(new BorderLayout());
+        card.setBorder(BorderFactory.createEtchedBorder());
+        
+        JLabel titleLabel = new JLabel("<html><center>" + icon + "<br/><b>" + title + "</b></center></html>");
+        JLabel valueLabel = new JLabel("<html><center><font size='5' color='blue'><b>" + value + "</b></font></center></html>");
+        
+        card.add(titleLabel, BorderLayout.NORTH);
+        card.add(valueLabel, BorderLayout.CENTER);
+        
+        return card;
+    }
+    
+    private JPanel createTripListPanel() {
+        JPanel tripListPanel = new JPanel(new BorderLayout());
+        tripListPanel.setBorder(BorderFactory.createTitledBorder("Trip Details"));
+        
+        // Create list model with trip records
+        String[] tripData = state.getTripRecords().stream()
+            .map(this::formatTripRecord)
+            .toArray(String[]::new);
+        
+        JList<String> tripList = new JList<>(tripData);
+        tripList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        
+        JScrollPane scrollPane = new JScrollPane(tripList);
+        tripListPanel.add(scrollPane, BorderLayout.CENTER);
+        
+        // Add delete selected trip button
+        JPanel listButtonPanel = new JPanel(new FlowLayout());
+        JButton deleteSelectedButton = new JButton("Delete Selected Trip");
+        deleteSelectedButton.addActionListener(e -> {
+            int selectedIndex = tripList.getSelectedIndex();
+            if (selectedIndex >= 0) {
+                int result = JOptionPane.showConfirmDialog(
+                    tripListPanel,
+                    "Are you sure you want to delete this trip?",
+                    "Confirm Delete",
+                    JOptionPane.YES_NO_OPTION
+                );
+                if (result == JOptionPane.YES_OPTION) {
+                    state.getTripRecords().remove(selectedIndex);
+                    // Refresh the dialog
+                    SwingUtilities.getWindowAncestor(tripListPanel).dispose();
+                    showHistoryDialog();
+                }
+            } else {
+                JOptionPane.showMessageDialog(tripListPanel, "Please select a trip to delete.");
+            }
+        });
+        listButtonPanel.add(deleteSelectedButton);
+        tripListPanel.add(listButtonPanel, BorderLayout.SOUTH);
+        
+        return tripListPanel;
+    }
+    
+    private JPanel createHistoryButtonPanel(JDialog dialog) {
+        JPanel buttonPanel = new JPanel(new FlowLayout());
+        
+        JButton exportButton = new JButton("Export to File");
+        exportButton.addActionListener(e -> exportHistoryToFile(dialog));
+        
+        JButton clearAllButton = new JButton("Clear All History");
+        clearAllButton.addActionListener(e -> {
+            int result = JOptionPane.showConfirmDialog(
+                dialog,
+                "Are you sure you want to clear all trip history?",
+                "Confirm Clear All",
+                JOptionPane.YES_NO_OPTION
+            );
+            if (result == JOptionPane.YES_OPTION) {
+                state.getTripRecords().clear();
+                dialog.dispose();
+                showHistoryDialog();
+            }
+        });
+        
+        JButton closeButton = new JButton("Close");
+        closeButton.addActionListener(e -> dialog.dispose());
+        
+        buttonPanel.add(exportButton);
+        buttonPanel.add(clearAllButton);
+        buttonPanel.add(closeButton);
+        
+        return buttonPanel;
+    }
+    
+    private void exportHistoryToFile(JDialog parent) {
+        if (state.getTripRecords().isEmpty()) {
+            JOptionPane.showMessageDialog(parent, "No trip history to export.");
+            return;
         }
-        if (serialPort != null && serialPort.isOpen()) {
-            serialPort.closePort();
+        
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setFileFilter(new FileNameExtensionFilter("Text Files", "txt"));
+        fileChooser.setSelectedFile(new java.io.File("trip_history_" + 
+            LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")) + ".txt"));
+        
+        int result = fileChooser.showSaveDialog(parent);
+        if (result == JFileChooser.APPROVE_OPTION) {
+            try (FileWriter writer = new FileWriter(fileChooser.getSelectedFile())) {
+                writer.write("Metro Fare System - Trip History Report\n");
+                writer.write("Generated on: " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")) + "\n");
+                writer.write("=" + "=".repeat(50) + "\n\n");
+                
+                // Summary
+                int totalTrips = state.getTripRecords().size();
+                int totalFare = state.getTripRecords().stream().mapToInt(TripRecord::getFare).sum();
+                int totalDistance = state.getTripRecords().stream().mapToInt(TripRecord::getDistance).sum();
+                
+                writer.write("SUMMARY:\n");
+                writer.write("Total Trips: " + totalTrips + "\n");
+                writer.write("Total Fare: ₱" + totalFare + "\n");
+                writer.write("Total Distance: " + totalDistance + " km\n\n");
+                
+                writer.write("TRIP DETAILS:\n");
+                writer.write("-".repeat(80) + "\n");
+                
+                for (int i = 0; i < state.getTripRecords().size(); i++) {
+                    TripRecord record = state.getTripRecords().get(i);
+                    String lineName = record.getLine() == 1 ? "LRT-1" : "LRT-2";
+                    writer.write(String.format("%d. %s | %s\n", 
+                        i + 1, record.getDatetime(), lineName));
+                    writer.write(String.format("   %s → %s\n", 
+                        getStationName(record.getLine(), record.getOrigin()),
+                        getStationName(record.getLine(), record.getDestination())));
+                    writer.write(String.format("   Fare: ₱%d | Distance: %d km | %s %s\n\n", 
+                        record.getFare(), record.getDistance(), 
+                        record.getTicketType(), record.getCardType()));
+                }
+                
+                JOptionPane.showMessageDialog(parent, 
+                    "Trip history exported successfully to:\n" + fileChooser.getSelectedFile().getAbsolutePath());
+                    
+            } catch (IOException ex) {
+                JOptionPane.showMessageDialog(parent, 
+                    "Error exporting trip history: " + ex.getMessage(), 
+                    "Export Error", JOptionPane.ERROR_MESSAGE);
+            }
         }
+    }
+    
+    private String formatTripRecord(TripRecord record) {
+        String lineName = record.getLine() == 1 ? "LRT-1" : "LRT-2";
+        String originStation = getStationName(record.getLine(), record.getOrigin());
+        String destStation = getStationName(record.getLine(), record.getDestination());
+        
+        return String.format("<html><b>%s</b> | %s<br/>" +
+                           "&nbsp;&nbsp;%s → %s<br/>" +
+                           "&nbsp;&nbsp;<font color='green'>₱%d</font> | " +
+                           "<font color='blue'>%d km</font> | " +
+                           "<font color='purple'>%s %s</font></html>", 
+            record.getDatetime(),
+            lineName,
+            originStation,
+            destStation,
+            record.getFare(),
+            record.getDistance(),
+            record.getTicketType(),
+            record.getCardType()
+        );
+    }
+    
+    private String getStationName(int line, int stationIndex) {
+        // LRT-1 stations - Match Arduino PROGMEM exactly
+        String[] lrt1Stations = {
+            "FPJR.", "Balintawak", "Monumento", "5th Avenue", "R. Papa",
+            "Abad Santos", "Blumentritt", "Tayuman", "Bambang", "D. Jose",
+            "Carriedo", "Central Terminal", "United Nations", "Pedro Gil", "Quirino",
+            "Vito Cruz", "Gil Puyat", "Libertad", "EDSA", "Baclaran"
+        };
+        
+        // LRT-2 stations - Match Arduino PROGMEM exactly
+        String[] lrt2Stations = {
+            "Recto", "Legarda", "Pureza", "V. Mapa", "J. Ruiz",
+            "Gilmore", "Betty Go-Belmonte", "Cubao", "Anonas", "Katipunan",
+            "Santolan", "Marikina", "Antipolo"
+        };
+        
+        if (line == 1 && stationIndex >= 0 && stationIndex < lrt1Stations.length) {
+            return lrt1Stations[stationIndex];
+        } else if (line == 2 && stationIndex >= 0 && stationIndex < lrt2Stations.length) {
+            return lrt2Stations[stationIndex];
+        }
+        
+        return "Unknown Station";
     }
 
     public static void main(String[] args) {
-        launch(args);
+        try {
+            // Set system look and feel
+            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+        } catch (ClassNotFoundException | InstantiationException | IllegalAccessException | UnsupportedLookAndFeelException e) {
+            // Fallback to default look and feel
+            System.err.println("Could not set system look and feel: " + e.getMessage());
+        }
+        
+        SwingUtilities.invokeLater(() -> {
+            FareSystemApp app = new FareSystemApp();
+            app.setVisible(true);
+        });
     }
 } 
