@@ -1,5 +1,6 @@
-com\securitysystem\fare\FareSystemApp$1.class
 com\securitysystem\fare\TripRecord.class
-com\securitysystem\fare\FareSystemApp.class
 com\securitysystem\fare\FareSystemState.class
+com\securitysystem\fare\FareSystemApp$1.class
+com\securitysystem\fare\FareSystemApp.class
 com\securitysystem\fare\TopupRecord.class
+com\securitysystem\fare\DatabaseManager.class

@@ -44,13 +44,14 @@ public class FareSystemApp extends JFrame {
     private JLabel singleBalanceLabel;
     private JLabel currentStationLabel;
     private JTextField topupAmountField;
-    private JComboBox<String> cardTypeCombo;
-    private ScheduledExecutorService executor;
+    private JComboBox<String> cardTypeCombo;    private ScheduledExecutorService executor;
     private FareSystemState state;
-
-    public FareSystemApp() {
-        // Initialize the state
-        state = new FareSystemState();
+    private DatabaseManager databaseManager;    public FareSystemApp() {
+        // Initialize database first
+        databaseManager = new DatabaseManager();
+        
+        // Load the state from database
+        state = databaseManager.loadSystemState();
         
         // Set up the frame
         setTitle("Metro Fare System");
@@ -62,6 +63,11 @@ public class FareSystemApp extends JFrame {
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
+                // Save state to database before closing
+                if (databaseManager != null && state != null) {
+                    databaseManager.saveSystemState(state);
+                    databaseManager.closeConnection();
+                }
                 if (executor != null) {
                     executor.shutdown();
                 }
@@ -74,8 +80,13 @@ public class FareSystemApp extends JFrame {
         // Create the UI components
         createUI();
         
-        // Initialize serial communication
+        // Update UI with loaded state
+        updateUI();
+          // Initialize serial communication
         initializeSerial();
+        
+        // Start periodic auto-save (every 30 seconds)
+        startPeriodicAutoSave();
     }
     
     private void createUI() {
@@ -135,9 +146,7 @@ public class FareSystemApp extends JFrame {
                 log("Error: Password required");
             }
         });
-        resetPanel.add(resetDistButton);
-        
-        // Add history button
+        resetPanel.add(resetDistButton);        // Add history button
         JButton historyButton = new JButton("History");
         historyButton.addActionListener(e -> showHistoryDialog());
         resetPanel.add(historyButton);
@@ -224,9 +233,7 @@ public class FareSystemApp extends JFrame {
                 });
             }
         }
-    }
-
-    private void handleBalanceUpdate(String data) {
+    }    private void handleBalanceUpdate(String data) {
         try {
             String[] parts = data.trim().split(",");
             if (parts.length == 2) {
@@ -235,13 +242,16 @@ public class FareSystemApp extends JFrame {
                 state.setBeepBalance(beepBalance);
                 state.setSingleBalance(singleBalance);
                 updateBalanceDisplay();
+                
+                // Save state to database
+                if (databaseManager != null) {
+                    databaseManager.saveSystemState(state);
+                }
             }
         } catch (NumberFormatException e) {
             log("Error parsing balance data: " + data);
         }
-    }
-
-    private void handleStationUpdate(String data) {
+    }    private void handleStationUpdate(String data) {
         String[] parts = data.split(",");
         if (parts.length >= 3) {
             int line = Integer.parseInt(parts[0]);
@@ -251,6 +261,11 @@ public class FareSystemApp extends JFrame {
             state.setCurrentStation(station);
             state.setCurrentStationName(stationName);
             updateStationDisplay();
+            
+            // Save state to database
+            if (databaseManager != null) {
+                databaseManager.saveSystemState(state);
+            }
         }
     }
     
@@ -265,9 +280,7 @@ public class FareSystemApp extends JFrame {
         } catch (NumberFormatException e) {
             log("Error parsing distance data: " + data);
         }
-    }
-
-    private void handleTripRecord(String data) {
+    }    private void handleTripRecord(String data) {
         String[] parts = data.split(",");
         if (parts.length >= 8) {
             TripRecord record = new TripRecord(
@@ -281,11 +294,15 @@ public class FareSystemApp extends JFrame {
                 parts[7]  // card type
             );
             state.addTripRecord(record);
+            
+            // Save to database
+            if (databaseManager != null) {
+                databaseManager.saveTripRecord(record);
+            }
+            
             log("Trip: " + record.toString());
         }
-    }
-
-    private void handleTopupRecord(String data) {
+    }    private void handleTopupRecord(String data) {
         String[] parts = data.split(",");
         if (parts.length >= 4) {
             TopupRecord record = new TopupRecord(
@@ -295,6 +312,12 @@ public class FareSystemApp extends JFrame {
                 parts[3]  // datetime
             );
             state.addTopupRecord(record);
+            
+            // Save to database
+            if (databaseManager != null) {
+                databaseManager.saveTopupRecord(record);
+            }
+            
             log("Top-up: " + record.toString());
         }
     }
@@ -474,9 +497,15 @@ public class FareSystemApp extends JFrame {
                     "Are you sure you want to delete this trip?",
                     "Confirm Delete",
                     JOptionPane.YES_NO_OPTION
-                );
-                if (result == JOptionPane.YES_OPTION) {
+                );                if (result == JOptionPane.YES_OPTION) {
+                    TripRecord recordToDelete = state.getTripRecords().get(selectedIndex);
                     state.getTripRecords().remove(selectedIndex);
+                    
+                    // Delete from database
+                    if (databaseManager != null) {
+                        databaseManager.deleteTripRecord(recordToDelete);
+                    }
+                    
                     // Refresh the dialog
                     SwingUtilities.getWindowAncestor(tripListPanel).dispose();
                     showHistoryDialog();
@@ -496,19 +525,26 @@ public class FareSystemApp extends JFrame {
         
         JButton exportButton = new JButton("Export to File");
         exportButton.addActionListener(e -> exportHistoryToFile(dialog));
-        
-        JButton clearAllButton = new JButton("Clear All History");
+          JButton clearAllButton = new JButton("Clear All History");
         clearAllButton.addActionListener(e -> {
             int result = JOptionPane.showConfirmDialog(
                 dialog,
-                "Are you sure you want to clear all trip history?",
+                "Are you sure you want to clear all trip history?\nThis will permanently delete all data from the database.",
                 "Confirm Clear All",
                 JOptionPane.YES_NO_OPTION
             );
             if (result == JOptionPane.YES_OPTION) {
                 state.getTripRecords().clear();
+                state.getTopupRecords().clear();
+                
+                // Clear data from database
+                if (databaseManager != null) {
+                    databaseManager.clearAllData();
+                }
+                
                 dialog.dispose();
                 showHistoryDialog();
+                log("All data cleared from memory and database");
             }
         });
         
@@ -636,5 +672,43 @@ public class FareSystemApp extends JFrame {
             FareSystemApp app = new FareSystemApp();
             app.setVisible(true);
         });
+    }    private void updateUI() {
+        // Update balance labels
+        updateBalanceDisplay();
+        
+        // Update current station label
+        updateStationDisplay();
+        
+        // Log that data was loaded from database (only once at startup)
+        if (!state.getTripRecords().isEmpty() || !state.getTopupRecords().isEmpty()) {
+            log("Loaded from database - " + state.getTripRecords().size() + " trips, " + 
+                state.getTopupRecords().size() + " topups");
+        } else {
+            log("Database ready - history will be saved automatically");
+        }
     }
-} 
+
+    private void startPeriodicAutoSave() {
+        // Create a scheduler for periodic auto-save
+        executor = Executors.newSingleThreadScheduledExecutor();
+        
+        // Schedule auto-save every 30 seconds
+        executor.scheduleAtFixedRate(() -> {
+            if (databaseManager != null && state != null) {
+                try {
+                    databaseManager.saveSystemState(state);
+                    // Only log occasionally to avoid spam
+                    if (System.currentTimeMillis() % 300000 < 30000) { // Log every 5 minutes
+                        SwingUtilities.invokeLater(() -> 
+                            log("Auto-saved state to database")
+                        );
+                    }
+                } catch (Exception e) {
+                    SwingUtilities.invokeLater(() -> 
+                        log("Error during auto-save: " + e.getMessage())
+                    );
+                }
+            }
+        }, 30, 30, TimeUnit.SECONDS);
+    }
+}
